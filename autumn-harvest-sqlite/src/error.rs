@@ -421,6 +421,11 @@ pub enum SqliteError {
     /// quiescence. The per-execution analog is [`Stuck`](Self::Stuck).
     #[error("fleet driver made no progress within the iteration safety bound (runaway)")]
     Runaway,
+
+    /// A Turso (`libsql://` / Hrana `/v2/pipeline`) replication or local
+    /// embedded replica synchronization error.
+    #[error("turso sync error: {0}")]
+    Turso(String),
 }
 
 impl SqliteError {
