@@ -674,6 +674,7 @@ mod queue;
 mod runtime;
 mod schema;
 mod store;
+pub mod turso;
 mod update;
 mod visibility;
 mod worker;
@@ -689,6 +690,7 @@ pub use crate::runtime::{
     UNSUPPORTED_FEATURE_ERROR_TYPE,
 };
 pub use crate::store::ActivityAttempt;
+pub use crate::turso::{TursoReplicaConfig, TursoSyncMode, TursoSyncReceipt, redact_turso_url};
 pub use crate::visibility::{
     DEFAULT_LIST_LIMIT, ExecutionDescription, ExecutionFilter, ExecutionPage, ExecutionSummary,
     ListCursor, MAX_FILTER_TERMS, MAX_LIST_LIMIT, SqliteReader, Stored,

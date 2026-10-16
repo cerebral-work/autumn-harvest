@@ -331,7 +331,8 @@ const WORKFLOW_PANIC_MAX_ATTEMPTS: u32 = 3;
 /// [`worker`](crate::worker)) and the workflow resumes purely by deterministic
 /// replay of the recorded history.
 pub struct SqliteRuntime {
-    conn: Connection,
+    #[allow(clippy::redundant_pub_crate)]
+    pub(crate) conn: Connection,
     workflows: HashMap<String, WorkflowHandlerFn>,
     /// The `execution_timeout` and retry policy of each workflow (issue
     /// #2029). A start freezes them on the run row.
