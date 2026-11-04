@@ -1,0 +1,120 @@
+# kache trial: compare a kache compiler cache with the current rust-cache setup.
+#
+# This workflow is an experiment. It gates nothing, and no other workflow uses
+# its caches. It compiles the same thing twice, side by side, on ubuntu-latest:
+#
+# - `rust-cache`: the setup every job in ci.yml uses today. Swatinem/rust-cache
+#   restores `target/` and the cargo registry.
+# - `kache`: kache-action sets `RUSTC_WRAPPER` and restores its own store of
+#   compiled crates. rust-cache still restores the registry, so both legs start
+#   with the same downloaded sources. It does not restore `target/`, because a
+#   restored `target/` makes cargo skip rustc and kache then sees no work.
+#
+# The compile is the first two steps of the `test` job in ci.yml, with
+# `--no-run`, so a flaky test cannot change a timing. Each leg writes its
+# timing to the job summary. The clock covers the cache restore and the
+# compile. It does not cover the post-job cache save. The kache leg also
+# writes kache's own hit and miss report.
+#
+# How to read it. The first run fills both caches, so it measures a cold
+# build. Run the workflow again from the Actions tab for the warm numbers.
+# kache can win when `Cargo.lock` changes: rust-cache then misses its exact
+# key, while kache still reuses each crate that did not change. To test that,
+# dispatch a run from a branch that bumps one dependency.
+#
+# Both legs use their own cache keys (`kache-trial-*`), so this workflow cannot
+# evict or poison a ci.yml cache. The 10 GB repository cache limit is shared,
+# so the kache store is capped with `max-size`.
+name: kache trial
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/kache-trial.yml
+
+concurrency:
+  group: kache-trial-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # rust-cache sets this too. kache cannot cache incremental builds, so both
+  # legs set it here and compile the same way.
+  CARGO_INCREMENTAL: 0
+  # Pin the kache release. A new kache release changes the trial only when this
+  # line changes. kache-action verifies the archive against its SHA-256 file.
+  KACHE_RELEASE: v2.0.0
+
+jobs:
+  compile:
+    name: Compile (${{ matrix.cache }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        cache: [rust-cache, kache]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # v1
+        with:
+          toolchain: stable
+
+      - name: Start the clock
+        run: echo "TRIAL_START=$(date +%s)" >> "$GITHUB_ENV"
+
+      # rust-cache leg: the same setup as ci.yml, under a trial-only key.
+      - if: matrix.cache == 'rust-cache'
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: kache-trial-baseline
+
+      # kache leg: rust-cache keeps the registry only. kache owns the compiled
+      # crates.
+      - if: matrix.cache == 'kache'
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: kache-trial-registry
+          cache-targets: false
+      - if: matrix.cache == 'kache'
+        uses: kunobi-ninja/kache-action@ad7317540dcdd71c904f7a60a87b620a0c0e67ed # v1
+        with:
+          version: ${{ env.KACHE_RELEASE }}
+          cache-key-prefix: kache-trial
+          max-size: 4GiB
+          # A sticky PR comment needs `pull-requests: write`. The job summary
+          # already holds the report.
+          pr-comment: false
+      # kache-action only warns and carries on when its download fails. The
+      # leg would then compile with no cache and still report a time. Fail
+      # instead, so a broken setup cannot pass for a slow cache.
+      - name: Check that kache wraps rustc
+        if: matrix.cache == 'kache'
+        run: |
+          set -euo pipefail
+          if [ -z "${RUSTC_WRAPPER:-}" ]; then
+            echo "::error::kache-action did not set RUSTC_WRAPPER"
+            exit 1
+          fi
+          "$RUSTC_WRAPPER" --version
+
+      - name: Compile the no-db tests
+        run: cargo test -p autumn-harvest --no-default-features --locked --no-run
+      - name: Compile the classic DAG tests
+        run: cargo test -p autumn-harvest --no-default-features --features db --lib --locked --no-run
+
+      - name: Report the time
+        if: always()
+        run: |
+          set -euo pipefail
+          elapsed=$(( $(date +%s) - TRIAL_START ))
+          {
+            echo "### ${{ matrix.cache }}: $(( elapsed / 60 ))m $(( elapsed % 60 ))s"
+            echo
+            echo "Cache restore and compile, run attempt ${{ github.run_attempt }}."
+            echo "The post-job cache save is not included."
+          } >> "$GITHUB_STEP_SUMMARY"
