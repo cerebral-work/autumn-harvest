@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "autumn-harvest",
-    "autumn-harvest-plugin",
     "autumn-harvest-agent",
     "autumn-harvest-macros",
     "autumn-harvest-cli",
@@ -19,18 +18,24 @@ members = [
     "examples/agent-mesh",
     "examples/history-load-gate",
     "examples/autoresearch",
-    "examples/billing-autumn-web",
     "examples/claude-agent-daemon",
-    "examples/quickstart",
     "examples/recall-eval",
     "examples/saga-choreography",
-    "examples/standalone-runner",
-    "examples/standalone-quickstart",
     "xtask",
 ]
 # The cargo-fuzz harness is nightly + libFuzzer-only and must never be built by
 # the root workspace resolver. It also declares its own `[workspace]` root.
-exclude = ["fuzz"]
+# cerebral-work fork, rusqlite 0.41 branch: autumn-web 0.10 bundles libsqlite3-sys ^0.38, which
+# cannot share the `sqlite3` link with rusqlite 0.41 (libsqlite3-sys 0.39). These members depend on
+# autumn-web (directly or through autumn-harvest-plugin), so they leave the workspace on this branch.
+exclude = [
+    "fuzz",
+    "autumn-harvest-plugin",
+    "examples/billing-autumn-web",
+    "examples/quickstart",
+    "examples/standalone-runner",
+    "examples/standalone-quickstart",
+]
 resolver = "3"
 
 [workspace.package]
@@ -73,7 +78,7 @@ redis = { version = "1.8", default-features = false, features = ["tokio-comp", "
 
 # SQLite (embedded, single-writer edge backend — bundled builds SQLite from
 # source so no system libsqlite3 and no Docker are required for tests).
-rusqlite = { version = "0.40", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 
 # Dev / test
 testcontainers = "0.27"

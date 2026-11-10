@@ -215,8 +215,11 @@ unsafe extern "C" fn sqlite_auto_extension(
     _api: *const rusqlite::ffi::sqlite3_api_routines,
 ) -> std::ffi::c_int {
     // SAFETY: `db` is the live handle that SQLite passes in.
-    if let Ok(conn) = unsafe { rusqlite::Connection::from_handle(db) } {
-        conn.trace_v2(
+    if let Ok(mut conn) = unsafe { rusqlite::Connection::from_handle(db) } {
+        // rusqlite 0.41 returns the registration result; 0.40 returned nothing. A census that
+        // misses one connection is still a census, so a failure here must not fail the open.
+        // The callback lives in the handle's client data, so dropping `conn` does not free it.
+        let _ = conn.trace_v2(
             rusqlite::trace::TraceEventCodes::SQLITE_TRACE_STMT,
             Some(sqlite_trace),
         );

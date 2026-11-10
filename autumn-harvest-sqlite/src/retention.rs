@@ -42,13 +42,17 @@ const RUN_TABLES: [&str; 8] = [
 ///
 /// `?5` names the one type of the pass, or is `NULL` for every type. `?6`
 /// is a JSON array of the types that the pass leaves to their own pass.
+// `+workflow_name` keeps the type filter off `idx_harvest_executions_key`. SQLite 3.54
+// (libsqlite3-sys 0.39) otherwise seeks that index for a named type and sorts every closed run
+// of the type in a temp B-tree on each batch; `idx_harvest_executions_closed` already yields
+// the `ORDER BY` order. The rows are the same either way.
 const CANDIDATES: &str = "\
     SELECT closed_at, exec_id, workflow_name FROM harvest_executions \
     WHERE closed_at IS NOT NULL AND closed_at < ?1 \
       AND (closed_at, exec_id) > (?2, ?3) \
       AND state IN ('COMPLETED', 'FAILED', 'CANCELLED', 'TERMINATED', \
                     'TIMED_OUT', 'CONTINUED_AS_NEW') \
-      AND (?5 IS NULL OR workflow_name = ?5) \
+      AND (?5 IS NULL OR +workflow_name = ?5) \
       AND workflow_name NOT IN (SELECT value FROM json_each(?6)) \
     ORDER BY closed_at, exec_id \
     LIMIT ?4";
