@@ -1736,6 +1736,10 @@ impl Plugin for HarvestPlugin {
 
         if let Some(path) = api_path {
             let ui_router = harvest_ui_router(api_state.clone());
+            // `autumn-web` 0.8 (`AUTUMN_WEB_REQUIREMENT`) predates host-level
+            // `AppBuilder::register_aeo_skill` and `agent_skill` hooks. Harvest
+            // exposes agent discovery directly at `{path}/llms.txt`,
+            // `{path}/openapi.json`, and `{path}/ui/llms.txt`.
             let router = harvest_api_router(api_state.clone()).nest("/ui", ui_router);
             // The layer stack and its load-bearing ordering live in
             // `apply_admin_auth_layers`, which the standalone mount path also

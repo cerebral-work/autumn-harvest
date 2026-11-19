@@ -1,0 +1,258 @@
+# Autumn Harvest Orchestrator API
+
+> Control-plane HTTP API for autumn-harvest durable workflows (v0.7.0, contract v2).
+
+Generated from `docs/api-contract.json`. Do not edit by hand; regenerate with `scripts/regenerate-openapi.sh`.
+
+- Conventional mount prefix: `/api/harvest` (`HarvestPlugin::api(path)` sets the active prefix; every path below is relative to it).
+- Authentication schemes: `HarvestBearerToken` (`Authorization: Bearer hvst_<secret>` with `read`, `mutate`, or `admin` scope) and `HarvestSessionCookie` (`session` cookie from the embedding `autumn-web` host). Routes marked `[public]` require no credentials.
+- Web UI companion: when Vantage is mounted alongside this router, `/api/harvest/ui/llms.txt` summarizes the operator dashboard views.
+
+## Discovery and Schemas
+
+- [OpenAPI 3.1 Specification](openapi.json): `GET /openapi.json` — complete OpenAPI 3.1 schema for every management route.
+- [Agent Discovery Index](llms.txt): `GET /llms.txt` — this `llms.txt` overview and category-grouped endpoint catalogue.
+- [Registered Workflows](workflows/registered): `GET /workflows/registered` — list registered workflow definitions, versions, and task queues.
+- [Workflow Input/Output JSON Schema](workflows/registered/{name}/schema): `GET /workflows/registered/{name}/schema` — inspect input and output JSON Schemas for a registered workflow before starting an execution.
+
+## Core Workflow Endpoints
+
+- `POST /workflows/{workflow_name}/start` [mutating] — Start a new workflow execution.
+- `GET /workflows/{id}` [read-only] — Get full details and event history for a single workflow execution.
+- `GET /workflows/{id}/result` [read-only] — Return a compact terminal result for a workflow execution, optionally long-polling without returning event history.
+- `POST /workflows/{id}/signal/{signal_name}` [mutating] — Send a named signal to a running workflow execution.
+- `POST /workflows/{id}/cancel` [mutating] — Cancel a running workflow execution.
+- `POST /workflows/{id}/terminate` [mutating] — Force-terminate a single workflow execution.
+- `GET /health` [public] — Liveness health check.
+
+## Endpoints (admin)
+
+- `GET /activities` [read-only] — List every REGISTERED activity type with its current pause state (issue #807).
+- `GET /activities/{activity_name}` [read-only] — Get one activity type's pause state (issue #807).
+- `POST /activities/{activity_name}/pause` [mutating] — Hold dispatch for ONE activity type, fleet-wide, during a scoped downstream outage (issue #807).
+- `POST /activities/{activity_name}/resume` [mutating] — Release a per-activity-type hold, fleet-wide (issue #807).
+- `GET /admin/audit-export` [read-only] — Per-shard status of the audit-record export to an external SIEM sink (issue #953): cursor position, delivery lag, delivery state, and the last sink error.
+- `POST /admin/audit-export/decommission` [mutating] — Retire one shard's audit-export cursor, permitting retention to purge its aged audit records (issue #953, issue #1273).
+- `POST /admin/audit-export/reactivate` [mutating] — Reactivate one shard's retired audit-export cursor, resuming from the preserved sequence high-water mark (issue #1273).
+- `POST /admin/audit-export/redrive` [mutating] — Rewind one shard's audit-export cursor so already-delivered audit records are re-exported to the SIEM sink (issue #953), for recovery after sink-side data loss.
+- `GET /admin/canary` [read-only] — Synthetic liveness canary freshness report (issue #796).
+- `GET /admin/circuits` [read-only] — List every activity circuit breaker and its current in-process state (issue #369): closed/open/half-open, last-trip timestamp, rolling failure count, and tim...
+- `GET /admin/circuits/{activity_name}` [read-only] — Return the current circuit-breaker state for a single activity (issue #369).
+- `POST /admin/circuits/{activity_name}/force-close` [mutating] — Operator action: clear any pin and reset an activity's circuit breaker to closed so normal tracking resumes (issue #369).
+- `POST /admin/circuits/{activity_name}/force-open` [mutating] — Operator action: pin an activity's circuit breaker open for manual incident response (issue #369).
+- `GET /admin/codec/rotation` [read-only] — Report payload-codec key rotation progress per shard (issue #948).
+- `GET /admin/concurrency` [read-only] — Return live per-key concurrency statistics, grouped by (concurrency_key, task_type) and summed across shards: configured cap (max_concurrent), currently in-f...
+- `GET /admin/config` [read-only] — Return the resolved effective runtime configuration of the fleet, secret-free.
+- `GET /admin/debounce` [read-only] — Return all pending debounce records across all shards.
+- `GET /admin/history/export-sample` [read-only] — Stratified in-flight history sample for the replay-drift gate (issue #798).
+- `GET /admin/history/exports` [read-only] — Batch-export event histories for multiple executions matching the provided filters.
+- `GET /admin/metrics` [read-only] — Return Prometheus-compatible metrics scrapable by autoscalers or monitoring systems.
+- `GET /admin/preflight` [read-only] — Run deployment readiness preflight checks: database connectivity, migration status, shard health, and worker coverage.
+- `GET /admin/queue-coverage` [read-only] — Fleet-wide task-queue coverage (issue #774): report task queues with >=1 PENDING task and zero live workers polling them, fanned out across every readable sh...
+- `GET /admin/queues/paused` [read-only] — List every currently-paused task queue (issue #619), with the reason for the hold, the operator who placed it, when it was placed, and how many PENDING tasks...
+- `GET /admin/queues/scaling` [read-only] — Return worker-pool scaling signal per-queue statistics, including backlog, in-flight, scheduled, and active worker counts.
+- `GET /admin/queues/{queue_name}/fairness` [read-only] — Show the fairness key weights and the claim state of one task queue (issue #1976).
+- `DELETE /admin/queues/{queue_name}/fairness/{fairness_key}` [mutating] — Clear the weight of one fairness key in a task queue (issue #1976).
+- `POST /admin/queues/{queue_name}/fairness/{fairness_key}` [mutating] — Set the weight of one fairness key in a task queue (issue #1976).
+- `POST /admin/queues/{queue_name}/pause` [mutating] — Hold dispatch on a named task queue during a scoped downstream outage (issue #619).
+- `POST /admin/queues/{queue_name}/resume` [mutating] — Release an operator queue pause (issue #619).
+- `GET /admin/quotas` [read-only] — List usage-vs-limit for every resolved `(workflow_name, quota_key)` pair with declared per-tenant resource quotas (issue #946).
+- `GET /admin/rate-limits` [read-only] — List all active rate limit token buckets and current token levels.
+- `DELETE /admin/rate-limits/{activity_name}/override` [mutating] — Clear a TTL'd runtime pacing override before its TTL elapses, immediately reverting to the declared baseline with no worker restart (issue #945).
+- `POST /admin/rate-limits/{activity_name}/override` [mutating] — Set (or replace) a TTL'd runtime pacing override on top of a declared per-activity rate limit (issue #945).
+- `POST /admin/rate-limits/{key}` [mutating] — Insert or dynamically override a rate limit configuration.
+- `GET /admin/retention` [read-only] — Return the current status of the retention janitor.
+- `POST /admin/retention/run-now` [mutating] — Trigger the retention janitor to run immediately outside its scheduled interval.
+- `GET /admin/shards/health` [read-only] — Return per-shard readiness: ready, degraded, or unavailable.
+- `GET /admin/start-throttle` [read-only] — Return the per-(workflow_name, throttle_key) deferred-start backlog across all shards (issue #607).
+- `DELETE /admin/start-throttle/{workflow_name}/override` [mutating] — Clear a TTL'd runtime pacing override before its TTL elapses, immediately reverting to the declared baseline with no worker restart (issue #945).
+- `GET /admin/start-throttle/{workflow_name}/override` [read-only] — Read-only companion to the SET/DELETE routes above (issue #945): resolves and reports a workflow's TTL'd pacing-override state directly against the bucket th...
+- `POST /admin/start-throttle/{workflow_name}/override` [mutating] — Set (or replace) a TTL'd runtime pacing override on top of a declared workflow-start throttle (issue #945, extends issue #607).
+- `GET /admin/status` [read-only] — Rolled-up management health summary (issue #679): composes five existing read models (workers, shards, dead-letters, queues, stalled workflows) into one JSON...
+- `GET /admin/usage` [read-only] — Historical per-tenant/per-workflow usage report (issue #596): the historical companion to the point-in-time GET /admin/concurrency endpoint.
+- `GET /admin/version-gates/retirement-check` [read-only] — Check whether a version-gate change ID is safe to retire.
+- `GET /admin/version-gates/usage` [read-only] — Report recorded workflow version-gate usage.
+- `GET /admin/workflow-types/reachability` [read-only] — Report per-workflow-type handler reachability so an operator can gate safe handler removal (issue #520).
+- `POST /admin/workflows/replay-canary` [mutating] — Run the replay canary over a fanned-out sample of currently running executions to verify replay determinism.
+
+## Endpoints (admission_gates)
+
+- `GET /admin/gates` [read-only] — List all active (non-lifted) admission gates.
+- `POST /admin/gates` [mutating] — Create an admission gate to halt new workflow starts for the specified scope.
+- `DELETE /admin/gates/{id}` [mutating] — Lift (soft-delete) an admission gate, immediately re-opening the blocked scope.
+
+## Endpoints (api_tokens)
+
+- `GET /admin/tokens` [read-only] — List all scoped API tokens as metadata only (issue #942).
+- `POST /admin/tokens` [mutating] — Mint a scoped API token (issue #942).
+- `DELETE /admin/tokens/{id}` [mutating] — Revoke a scoped API token (issue #942).
+
+## Endpoints (audit)
+
+- `GET /admin/audit` [read-only] — Browse the audit trail of management API mutations.
+
+## Endpoints (batch)
+
+- `GET /batch-operations` [read-only] — List submitted batch operations and their current progress.
+- `POST /batch-operations` [mutating] — Submit a fleet-wide batch operation (Cancel, Terminate, or Signal) targeting workflows matching a filter.
+- `GET /batch-operations/{id}` [read-only] — Get the current status and progress of a batch operation.
+- `POST /workflows/batch_reset` [mutating] — Reset a cohort of workflow executions to a shared semantic point.
+- `POST /workflows/batch_start` [mutating] — Start N workflow executions in one batched request.
+
+## Endpoints (build_routing)
+
+- `GET /admin/build-routing` [read-only] — List all build policies and cross-shard reachability snapshots for safe rolling deploy observability.
+- `GET /admin/build-routing/compat` [read-only] — List all compatibility declarations between build IDs.
+- `POST /admin/build-routing/compat` [mutating] — Declare that workers running build_id can safely replay histories assigned to compatible_with.
+- `DELETE /admin/build-routing/compat/{build_id}/{compat_with}` [mutating] — Revoke a compatibility declaration between two build IDs.
+- `POST /admin/build-routing/policies` [mutating] — Set the active build policy for a task queue.
+- `POST /admin/build-routing/ramp` [mutating] — Set (or update) a queue's percentage build ramp: ramp_percent% of new workflow starts on the queue receive target_build_id, the rest receive the queue's base...
+- `DELETE /admin/build-routing/ramp/{queue_name}` [mutating] — Clear a queue's percentage build ramp, immediately stopping new starts from reaching the target build.
+- `POST /admin/build-routing/retire` [read-only] — Check whether a build ID is safe to retire (no open executions, no pending tasks).
+
+## Endpoints (calendar)
+
+- `GET /calendars` [read-only] — List all named calendars (exclusion sets) available for schedule filtering.
+- `POST /calendars` [mutating] — Create a new named calendar.
+- `DELETE /calendars/{name}` [mutating] — Delete a named calendar.
+- `GET /calendars/{name}` [read-only] — Get a named calendar including its exclusion date list.
+- `PUT /calendars/{name}` [mutating] — Replace the exclusion date list for a calendar.
+
+## Endpoints (completion-trigger)
+
+- `GET /admin/completion-triggers` [read-only] — List all completion triggers.
+- `POST /admin/completion-triggers` [mutating] — Register or create a completion trigger.
+
+## Endpoints (dag)
+
+- `GET /dags` [read-only] — List all registered DAGs and their current pause/enabled state.
+- `PATCH /dags/{dag_name}` [mutating] — Update mutable DAG configuration fields (currently: pause/unpause).
+- `GET /dags/{dag_name}/runs` [read-only] — List run history for a specific DAG.
+- `GET /dags/{dag_name}/runs/{run_exec_id}` [read-only] — DAG run graph view (issue #690): the run's node topology annotated with per-node status/timing/attempts/error, reconstructed purely from the registered DagDe...
+- `POST /dags/{dag_name}/runs/{run_exec_id}/retry` [mutating] — Retry a failed DAG run from one or more failed nodes (issue #366).
+- `POST /dags/{dag_name}/trigger` [mutating] — Manually trigger a DAG run outside its schedule.
+
+## Endpoints (discovery)
+
+- `GET /llms.txt` [public] — Serve the agent-readable llms.txt Markdown discovery index for this management API.
+- `GET /openapi.json` [public] — Serve the OpenAPI 3.1 document for this management API (issue #694).
+- `GET /workflows/registered` [read-only] — List all registered workflow types with their optional JSON Schema, description, and schema fields.
+- `GET /workflows/registered/{name}/interface` [read-only] — Enumerate a registered workflow type's published interaction surface: its signal, query, and update handlers, each with an optional argument/response JSON Sc...
+- `GET /workflows/registered/{name}/schema` [read-only] — Fetch the RegisteredWorkflowRecord for a single registered workflow type by name, including its opt-in declared_activities/declared_children dependency decla...
+
+## Endpoints (dlq)
+
+- `GET /dead-letters` [read-only] — List dead-lettered tasks that have exhausted all retry attempts.
+- `GET /dead-letters/aggregate` [read-only] — Root-cause aggregation for DLQ triage: group dead-letter entries by workflow_name, activity_name, queue_name, task_type, time_bucket, a derived failure_signa...
+- `POST /dead-letters/discard` [mutating] — Bulk-discard dead-lettered tasks matching the provided filters, removing them from the DLQ permanently.
+- `POST /dead-letters/replay` [mutating] — Bulk-replay dead-lettered tasks matching the provided filters by re-enqueuing them.
+- `POST /dead-letters/{id}/replay` [mutating] — Replay a single dead-lettered task by re-enqueuing it.
+- `POST /dlq/redrive` [mutating] — Redrive (re-enqueue) dead-lettered tasks matching a filter, with a fresh retry budget, after deploying a fix.
+
+## Endpoints (external_activity)
+
+- `POST /activities/external/{token}/complete` [mutating] — Complete an external activity identified by its task token, supplying the success output.
+- `POST /activities/external/{token}/fail` [mutating] — Fail an external activity, optionally marking the error as retryable.
+- `POST /activities/external/{token}/heartbeat` [mutating] — Send a liveness heartbeat for an in-progress external activity, optionally extending the deadline.
+- `GET /admin/external-handoffs` [read-only] — List pending external activity handoffs with optional filters.
+- `GET /admin/external-handoffs/{token}` [read-only] — Get the current state and metadata of a single external activity handoff.
+
+## Endpoints (health)
+
+- `GET /health` [public] — Liveness health check.
+- `GET /health/live` [public] — Liveness probe (issue #1812).
+- `GET /health/ready` [public] — Readiness probe (issue #1812).
+
+## Endpoints (queue)
+
+- `GET /admin/queues/{queue_name}/eligibility` [read-only] — Get detailed worker and queue status eligibility and diagnostic breakdown for triaging stuck tasks in a specific queue.
+- `GET /admin/tasks/{id}/eligibility` [read-only] — Get detailed worker eligibility and diagnostic breakdown narrowed to a single pending task.
+- `PATCH /tasks/{id}` [mutating] — Re-prioritize a pending task without restarting its workflow (issue #249).
+
+## Endpoints (schedule)
+
+- `GET /admin/schedules` [read-only] — List all workflow and DAG schedules.
+- `GET /admin/schedules/decisions` [read-only] — List schedule-decision records (fire/skip/overlap/catchup outcomes) across all schedules.
+- `POST /admin/schedules/preview` [read-only] — Validate a candidate schedule config and preview the next N firing instants without persisting anything (issue #348).
+- `POST /admin/schedules/workflow` [mutating] — Create a new cron or interval schedule for a workflow.
+- `DELETE /admin/schedules/{id}` [mutating] — Delete a schedule.
+- `GET /admin/schedules/{id}` [read-only] — Get a single schedule by UUID.
+- `PATCH /admin/schedules/{id}` [mutating] — Partially update an existing workflow schedule in place (issue #771).
+- `POST /admin/schedules/{id}/backfill` [mutating] — Backfill missed scheduled runs for a workflow or DAG schedule over an explicit time window.
+- `GET /admin/schedules/{id}/decisions` [read-only] — List schedule-decision records for a specific schedule.
+- `POST /admin/schedules/{id}/pause` [mutating] — Pause a schedule, preventing it from triggering new runs.
+- `GET /admin/schedules/{id}/preview` [read-only] — Preview the next N planned firing instants for a saved schedule (issue #348).
+- `POST /admin/schedules/{id}/resume` [mutating] — Resume a paused schedule.
+- `GET /admin/schedules/{id}/runs` [read-only] — List the workflow executions a schedule launched, newest-slot-first (ordered by scheduled_for, falling back to started_at for slot-less manual fires), each w...
+- `POST /admin/schedules/{id}/trigger` [mutating] — Trigger an immediate one-off run of a schedule without advancing its next_fire_at cursor.
+
+## Endpoints (worker)
+
+- `GET /workers` [read-only] — List registered worker processes and their current lifecycle status.
+- `GET /workers/drain-preview` [read-only] — Preview which workers would be targeted by a drain request, without modifying anything.
+- `GET /workers/health` [read-only] — Return aggregated fleet health statistics (active, stale, draining, stopped counts per shard).
+- `GET /workers/{worker_id}` [read-only] — Get details for a single worker process.
+- `POST /workers/{worker_id}/drain` [mutating] — Request a graceful drain for a specific worker.
+- `GET /workers/{worker_id}/pinned` [read-only] — List workflow executions currently soft-pinned to the given worker by the sticky routing lease.
+
+## Endpoints (workflow)
+
+- `GET /batches/pending` [read-only] — Return all pending event batch records across all shards.
+- `GET /executions/{exec_id}/events/stream` [read-only] — Server-Sent Events stream of WorkflowEvent history for one execution.
+- `GET /workflows` [read-only] — List workflow executions with optional filters.
+- `GET /workflows/by-id/{workflow_name}` [read-only] — Missing-workflow_id guard for the business-id route family: always returns 400 (the business-id form requires /workflows/by-id/{workflow_name}/{workflow_id}).
+- `POST /workflows/by-id/{workflow_name}` [read-only] — Missing-workflow_id guard for the business-id route family (POST variant): always returns 400.
+- `GET /workflows/by-id/{workflow_name}/` [read-only] — Empty-workflow_id guard for the business-id route family (issue #1353): the literal trailing-slash form of GET /workflows/by-id/{workflow_name}/{workflow_id}...
+- `GET /workflows/by-id/{workflow_name}/{workflow_id}` [read-only] — Describe the current run for a business (workflow_name, workflow_id).
+- `POST /workflows/by-id/{workflow_name}/{workflow_id}/cancel` [mutating] — Cancel the current run of a business (workflow_name, workflow_id).
+- `GET /workflows/by-id/{workflow_name}/{workflow_id}/children` [read-only] — List child executions of the current run for a business (workflow_name, workflow_id).
+- `POST /workflows/by-id/{workflow_name}/{workflow_id}/pause` [mutating] — Pause the current run of a business (workflow_name, workflow_id).
+- `GET /workflows/by-id/{workflow_name}/{workflow_id}/query/{query_name}` [read-only] — Invoke a registered no-arg query handler on the current run of a business (workflow_name, workflow_id).
+- `POST /workflows/by-id/{workflow_name}/{workflow_id}/query/{query_name}` [read-only] — Invoke a registered query handler with typed JSON args on the current run of a business (workflow_name, workflow_id).
+- `GET /workflows/by-id/{workflow_name}/{workflow_id}/result` [read-only] — Compact terminal result for the current run of a business (workflow_name, workflow_id).
+- `POST /workflows/by-id/{workflow_name}/{workflow_id}/resume` [mutating] — Resume the current (paused) run of a business (workflow_name, workflow_id).
+- `POST /workflows/by-id/{workflow_name}/{workflow_id}/signal/{signal_name}` [mutating] — Send a named signal to the current run of a business (workflow_name, workflow_id).
+- `GET /workflows/by-id/{workflow_name}/{workflow_id}/stack` [read-only] — Current wait state (what it is blocked on) for the current run of a business (workflow_name, workflow_id).
+- `GET /workflows/changes/stream` [read-only] — Server-Sent Events signal for live list views (issue #1982).
+- `GET /workflows/count` [read-only] — Grouped execution-count fleet snapshot (issue #544): counts harvest_workflow_executions rows grouped by state and/or workflow_name across all shards, compute...
+- `GET /workflows/summaries` [read-only] — List tiered/summary-retention execution summaries (issue #752): compact, queryable rows the retention janitor demotes a hard-deleted terminal execution into ...
+- `GET /workflows/types/{workflow_name}/handlers` [read-only] — Enumerate the query and update handlers registered for a workflow type (read-only).
+- `GET /workflows/{id}` [read-only] — Get full details and event history for a single workflow execution.
+- `POST /workflows/{id}/activities/{activity_exec_id}/fail-now` [mutating] — Force-fail exactly one hung in-flight (RUNNING) activity task.
+- `POST /workflows/{id}/activities/{activity_exec_id}/retry-now` [mutating] — Force a backing-off activity to retry immediately by advancing its scheduled_at to NOW() and waking an idle worker via pg_notify.
+- `GET /workflows/{id}/archived-history` [read-only] — Read back the archived history of a run (issue #1983).
+- `GET /workflows/{id}/awaitables` [read-only] — Open-awaitables diagnostic (issue #615): names every open awaitable the execution is currently parked on, across six categories — pending activities (regular...
+- `POST /workflows/{id}/cancel` [mutating] — Cancel a running workflow execution.
+- `GET /workflows/{id}/children` [read-only] — List child workflow executions spawned by a parent execution.
+- `GET /workflows/{id}/completion-deliveries` [read-only] — List completion-callback deliveries (issue #605) for an execution, ordered by callback_index, including PENDING/INFLIGHT/DELIVERED/FAILED rows.
+- `POST /workflows/{id}/completion-deliveries/{delivery_id}/redrive` [mutating] — Manually redrive a dead-lettered completion-callback delivery (issue #605) after the receiver endpoint is fixed.
+- `GET /workflows/{id}/diagnose` [read-only] — Per-execution stall diagnosis (issue #809): answers "is this run healthily waiting or pathologically stuck, and what is the actionable root cause?" in one ca...
+- `POST /workflows/{id}/erase-payloads` [mutating] — Tombstone all payload-bearing fields (input, output, payload, details, value, last_completion_result) in every event row, the execution row, and signal rows ...
+- `GET /workflows/{id}/history` [read-only] — Paginated, filterable event history for a single workflow execution (issue #529).
+- `GET /workflows/{id}/history/export` [read-only] — Export the complete event history for a single execution as a HistoryExportDocument suitable for use as a replay fixture.
+- `POST /workflows/{id}/legal-hold` [mutating] — Place (or refresh) a per-execution legal hold (issue #747).
+- `POST /workflows/{id}/legal-hold/release` [mutating] — Release a per-execution legal hold (issue #747): NULLs all four legal_hold_* columns so the execution becomes eligible for retention and PII erasure again.
+- `GET /workflows/{id}/logs` [read-only] — Durable per-execution author log lines (issue #790): the lines a workflow emitted through ctx.logger()/ctx.log_info/log_warn/log_error, persisted to harvest_...
+- `POST /workflows/{id}/pause` [mutating] — Pause a running workflow execution.
+- `GET /workflows/{id}/queries` [read-only] — List all query handler names registered by a running workflow.
+- `GET /workflows/{id}/query/{query_name}` [read-only] — Query the current state of a running workflow by invoking a registered no-arg query handler (backward-compat; prefer POST for typed args).
+- `POST /workflows/{id}/query/{query_name}` [read-only] — Query the current state of a running workflow, passing typed JSON args to the handler.
+- `POST /workflows/{id}/replay-diagnosis` [read-only] — Replay ONE execution's recorded history against the currently-registered #[workflow] handler on this node and return a structured determinism verdict (issue ...
+- `POST /workflows/{id}/rerun` [mutating] — Re-run a terminal workflow execution: start a BRAND-NEW execution from the source run's recorded start parameters.
+- `POST /workflows/{id}/reset` [mutating] — Fork a workflow execution at a specific event boundary, replaying from that point with a new execution ID.
+- `GET /workflows/{id}/result` [read-only] — Return a compact terminal result for a workflow execution, optionally long-polling without returning event history.
+- `POST /workflows/{id}/resume` [mutating] — Resume a paused workflow execution, re-arming command dispatch and waking the parked task.
+- `GET /workflows/{id}/run-chain` [read-only] — Reconstruct the ordered continue-as-new run chain that {id} belongs to, resolvable from ANY member (origin, a middle run, or the live/final tail).
+- `POST /workflows/{id}/signal/{signal_name}` [mutating] — Send a named signal to a running workflow execution.
+- `GET /workflows/{id}/stack` [read-only] — Show the current wait state of a running workflow (what it is blocked on).
+- `GET /workflows/{id}/stream` [read-only] — Server-Sent Events stream of the EPHEMERAL live-output progress chunks a running workflow publishes via ctx.publish_progress (issue #791).
+- `GET /workflows/{id}/stream/durable` [read-only] — Server-Sent Events stream of the DURABLE output chunks a workflow stores via ctx.publish_durable_progress (issue #1974).
+- `POST /workflows/{id}/terminate` [mutating] — Force-terminate a single workflow execution.
+- `GET /workflows/{id}/timeline` [read-only] — Reconstruct a single execution's timeline (per-step durations, busy-vs-wait split, slowest step) purely from recorded history; no new events are appended and...
+- `GET /workflows/{id}/tree` [read-only] — Recursive cross-shard execution lineage tree (issue #621): the full descendant tree rooted at {id}, so an operator triaging a DLQ/stuck alert can locate the ...
+- `PATCH /workflows/{id}/triage` [mutating] — Set, update, or clear an execution's operator-mutable triage tags: owner, severity, and a free-text note (issue #759).
+- `GET /workflows/{id}/update/{update_id}/result` [read-only] — Poll the result of a previously admitted workflow update.
+- `POST /workflows/{id}/update/{update_name}` [mutating] — Submit a synchronous update request to a running workflow.
+- `POST /workflows/{workflow_name}/signal-with-start` [mutating] — Atomically start a workflow if no live run for (workflow_name, workflow_id) exists, or signal the existing run otherwise (issue #244).
+- `POST /workflows/{workflow_name}/start` [mutating] — Start a new workflow execution.
+- `POST /workflows/{workflow_name}/update-with-start` [mutating] — Atomically start a workflow if no live run for (workflow_name, workflow_id) exists, or attach to the existing run otherwise, and admit exactly one update in ...

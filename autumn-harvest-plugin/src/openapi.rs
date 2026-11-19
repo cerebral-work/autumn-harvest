@@ -3,20 +3,23 @@
 // every mention in backticks, matching `autumn_web::openapi`.
 #![allow(clippy::doc_markdown)]
 
-//! OpenAPI 3.1 document for the Harvest management API.
+//! OpenAPI 3.1 document and `llms.txt` index for the Harvest management API.
 //!
 //! # One source
 //!
 //! `docs/api-contract.json` is the single source. [`document_from_contract`]
-//! transforms it. Two checked-in files hold the result, and
-//! `scripts/regenerate-openapi.sh` writes both:
+//! and [`llms_txt_from_contract`] transform it. Four checked-in files hold the
+//! results, and `scripts/regenerate-openapi.sh` writes all four:
 //!
 //! * `autumn-harvest-plugin/openapi.json` — compact, compiled in below, and
 //!   served verbatim. It lives inside the crate because a published crate can
 //!   carry no file from outside its own directory.
 //! * `docs/openapi.json` — the same document, pretty-printed for reading.
+//! * `autumn-harvest-plugin/llms.txt` — agent-readable Markdown index,
+//!   compiled in below and served at `GET /llms.txt`.
+//! * `docs/llms.txt` — identical checked-in copy for repository readers.
 //!
-//! `tests/openapi_spec.rs` fails when either file drifts. The contract is in
+//! `tests/openapi_spec.rs` fails when any artifact drifts. The contract is in
 //! turn pinned to `management_api_routes` by `tests/contract_regression.rs`, so
 //! a route on that list cannot exist without reaching the published spec.
 //!
@@ -35,10 +38,11 @@
 //! runs in the generator and in tests, where a defect names the route.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::sync::LazyLock;
 
 use autumn_web::reexports::axum::response::IntoResponse;
-use autumn_web::reexports::http::header;
+use autumn_web::reexports::http::{StatusCode, header};
 use serde_json::{Map, Value, json};
 
 /// Conventional mount point for `harvest_api_router`.
@@ -49,6 +53,13 @@ pub const CONVENTIONAL_MOUNT_PATH: &str = "/api/harvest";
 
 /// Media type served for a route whose contract declares none.
 const DEFAULT_MEDIA_TYPE: &str = "application/json";
+
+/// Media type served by `llms.txt` discovery endpoints.
+pub(crate) const LLMS_TXT_MEDIA_TYPE: &str = "text/plain; charset=utf-8";
+
+/// RFC 8288 link header pointing agents from `/llms.txt` to `/openapi.json`.
+const LLMS_TXT_SERVICE_DESC_LINK: &str =
+    "</openapi.json>; rel=\"service-desc\"; type=\"application/json\"";
 
 /// Bearer scheme name, for the scoped API tokens of issue #942.
 const BEARER_SCHEME: &str = "HarvestBearerToken";
@@ -85,6 +96,11 @@ pub struct OpenApiError(String);
 /// Written by `scripts/regenerate-openapi.sh`. Never edit it by hand.
 const OPENAPI_JSON: &str = include_str!("../openapi.json");
 
+/// The generated `llms.txt` index, compiled in and served verbatim.
+///
+/// Written by `scripts/regenerate-openapi.sh`. Never edit it by hand.
+const LLMS_TXT: &str = include_str!("../llms.txt");
+
 #[expect(clippy::expect_used, reason = "a unit test parses the generated file")]
 static DOCUMENT: LazyLock<Value> = LazyLock::new(|| {
     serde_json::from_str(OPENAPI_JSON).expect("the generated openapi.json must be valid JSON")
@@ -114,6 +130,189 @@ pub const fn openapi_json() -> &'static str {
 /// from the binary. Nothing here can fail.
 pub(crate) async fn get_openapi_document() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, DEFAULT_MEDIA_TYPE)], OPENAPI_JSON)
+}
+
+/// The `llms.txt` discovery index exactly as served, compiled in.
+#[must_use]
+pub const fn llms_txt() -> &'static str {
+    LLMS_TXT
+}
+
+/// `GET /llms.txt` — serve the compiled-in agent discovery index.
+///
+/// Read-only, reads no state, and copies no bytes. Advertises `/openapi.json`
+/// through an RFC 8288 `service-desc` `Link` header.
+pub(crate) async fn llms_txt_handler() -> impl IntoResponse {
+    (
+        [
+            (header::CONTENT_TYPE, LLMS_TXT_MEDIA_TYPE),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            (header::LINK, LLMS_TXT_SERVICE_DESC_LINK),
+        ],
+        LLMS_TXT,
+    )
+}
+
+/// Reject non-`GET` methods on `llms.txt` routes with `405` and `Allow: GET`.
+pub(crate) async fn llms_txt_method_not_allowed() -> impl IntoResponse {
+    (StatusCode::METHOD_NOT_ALLOWED, [(header::ALLOW, "GET")])
+}
+
+/// One validated route summary for [`llms_txt_from_contract`].
+struct LlmsRoute<'a> {
+    method: &'a str,
+    path: &'a str,
+    access: &'static str,
+    summary: String,
+}
+
+/// Transform a parsed management API contract into an `llms.txt` Markdown index.
+///
+/// # Errors
+///
+/// Returns [`OpenApiError`] when the contract omits a required route field or
+/// declares duplicate `(method, path)` entries.
+pub fn llms_txt_from_contract(contract: &Value) -> Result<String, OpenApiError> {
+    let routes = contract["routes"]
+        .as_array()
+        .ok_or_else(|| OpenApiError("`routes` must be an array".to_owned()))?;
+
+    let version = contract["version"].as_str().unwrap_or("0.0.0");
+    let contract_version = contract["contract_version"].as_str().unwrap_or("0");
+
+    let mut by_key: BTreeMap<(String, String), LlmsRoute<'_>> = BTreeMap::new();
+    let mut by_category: BTreeMap<&str, Vec<LlmsRoute<'_>>> = BTreeMap::new();
+
+    for route in routes {
+        let method = string_field(route, "method")?;
+        let path = string_field(route, "path")?;
+        let category = string_field(route, "category")?;
+        let description = string_field(route, "description")?;
+        let read_only = route["read_only"].as_bool().ok_or_else(|| {
+            OpenApiError(format!("{method} {path}: `read_only` must be a boolean"))
+        })?;
+        let access = if route_class(method, path) == PUBLIC_SAFE {
+            "public"
+        } else if read_only {
+            "read-only"
+        } else {
+            "mutating"
+        };
+        let summary = first_sentence(description);
+        let key = (method.to_uppercase(), path.to_owned());
+        if by_key.contains_key(&key) {
+            return Err(OpenApiError(format!(
+                "duplicate contract entry {method} {path}"
+            )));
+        }
+        by_key.insert(
+            key,
+            LlmsRoute {
+                method,
+                path,
+                access,
+                summary: summary.clone(),
+            },
+        );
+        by_category.entry(category).or_default().push(LlmsRoute {
+            method,
+            path,
+            access,
+            summary,
+        });
+    }
+
+    let mut out = String::new();
+    write_llms_txt_header(&mut out, version, contract_version);
+
+    let core_entries: Vec<&LlmsRoute<'_>> = CORE_CLIENT_ROUTES
+        .iter()
+        .filter_map(|(method, path)| by_key.get(&((*method).to_owned(), (*path).to_owned())))
+        .collect();
+    if !core_entries.is_empty() {
+        let _ = writeln!(out, "## Core Workflow Endpoints\n");
+        for entry in core_entries {
+            let _ = writeln!(
+                out,
+                "- `{} {}` [{}] — {}",
+                entry.method, entry.path, entry.access, entry.summary
+            );
+        }
+        out.push('\n');
+    }
+
+    for (category, mut entries) in by_category {
+        entries.sort_by(|a, b| (a.path, a.method).cmp(&(b.path, b.method)));
+        let _ = writeln!(out, "## Endpoints ({category})\n");
+        for entry in entries {
+            let _ = writeln!(
+                out,
+                "- `{} {}` [{}] — {}",
+                entry.method, entry.path, entry.access, entry.summary
+            );
+        }
+        out.push('\n');
+    }
+
+    // Normalize trailing whitespace to a single newline.
+    while out.ends_with("\n\n") {
+        out.pop();
+    }
+    Ok(out)
+}
+
+/// Write the static title, auth posture, and discovery section of `llms.txt`.
+fn write_llms_txt_header(out: &mut String, version: &str, contract_version: &str) {
+    let _ = writeln!(out, "# Autumn Harvest Orchestrator API\n");
+    let _ = writeln!(
+        out,
+        "> Control-plane HTTP API for autumn-harvest durable workflows \
+         (v{version}, contract v{contract_version}).\n"
+    );
+    let _ = writeln!(
+        out,
+        "Generated from `docs/api-contract.json`. Do not edit by hand; \
+         regenerate with `scripts/regenerate-openapi.sh`.\n"
+    );
+    let _ = writeln!(
+        out,
+        "- Conventional mount prefix: `{CONVENTIONAL_MOUNT_PATH}` \
+         (`HarvestPlugin::api(path)` sets the active prefix; every path below is relative to it)."
+    );
+    let _ = writeln!(
+        out,
+        "- Authentication schemes: `{BEARER_SCHEME}` (`Authorization: Bearer hvst_<secret>` \
+         with `read`, `mutate`, or `admin` scope) and `{SESSION_SCHEME}` (`session` cookie \
+         from the embedding `autumn-web` host). Routes marked `[public]` require no credentials."
+    );
+    let _ = writeln!(
+        out,
+        "- Web UI companion: when Vantage is mounted alongside this router, \
+         `{CONVENTIONAL_MOUNT_PATH}/ui/llms.txt` summarizes the operator dashboard views.\n"
+    );
+
+    let _ = writeln!(out, "## Discovery and Schemas\n");
+    let _ = writeln!(
+        out,
+        "- [OpenAPI 3.1 Specification](openapi.json): `GET /openapi.json` — \
+         complete OpenAPI 3.1 schema for every management route."
+    );
+    let _ = writeln!(
+        out,
+        "- [Agent Discovery Index](llms.txt): `GET /llms.txt` — \
+         this `llms.txt` overview and category-grouped endpoint catalogue."
+    );
+    let _ = writeln!(
+        out,
+        "- [Registered Workflows](workflows/registered): `GET /workflows/registered` — \
+         list registered workflow definitions, versions, and task queues."
+    );
+    let _ = writeln!(
+        out,
+        "- [Workflow Input/Output JSON Schema](workflows/registered/{{name}}/schema): \
+         `GET /workflows/registered/{{name}}/schema` — inspect input and output JSON Schemas \
+         for a registered workflow before starting an execution.\n"
+    );
 }
 
 /// Transform a parsed management API contract into an OpenAPI 3.1 document.
@@ -1440,5 +1639,96 @@ mod tests {
     fn a_summary_is_the_first_sentence() {
         assert_eq!(first_sentence("Start a run. More text."), "Start a run.");
         assert_eq!(first_sentence("No trailing period"), "No trailing period");
+    }
+
+    #[test]
+    fn llms_txt_renders_sections_deterministically() {
+        let forward = json!({
+            "version": "0.7.0",
+            "contract_version": "2",
+            "routes": [
+                {
+                    "method": "POST",
+                    "path": "/workflows/{workflow_name}/start",
+                    "category": "workflows",
+                    "read_only": false,
+                    "description": "Start a workflow execution. Extra detail.",
+                },
+                {
+                    "method": "GET",
+                    "path": "/health",
+                    "category": "health",
+                    "read_only": true,
+                    "description": "Report orchestrator health.",
+                },
+            ],
+        });
+        let reversed = json!({
+            "version": "0.7.0",
+            "contract_version": "2",
+            "routes": [
+                forward["routes"][1].clone(),
+                forward["routes"][0].clone(),
+            ],
+        });
+        let rendered = llms_txt_from_contract(&forward).expect("valid contract");
+        let rendered_rev = llms_txt_from_contract(&reversed).expect("valid contract");
+        assert_eq!(rendered, rendered_rev);
+        assert!(rendered.starts_with("# Autumn Harvest Orchestrator API\n"));
+        assert!(rendered.contains("> Control-plane HTTP API"));
+        assert!(rendered.contains(CONVENTIONAL_MOUNT_PATH));
+        assert!(rendered.contains(BEARER_SCHEME));
+        assert!(rendered.contains(SESSION_SCHEME));
+        assert!(rendered.contains("GET /openapi.json"));
+        assert!(rendered.contains("GET /workflows/registered/{name}/schema"));
+        assert!(rendered.contains("## Core Workflow Endpoints"));
+        assert!(rendered.contains("## Endpoints (health)"));
+        assert!(rendered.contains("## Endpoints (workflows)"));
+        assert!(rendered.contains("- `GET /health` [public] — Report orchestrator health."));
+        assert!(rendered.contains(
+            "- `POST /workflows/{workflow_name}/start` [mutating] — Start a workflow execution."
+        ));
+    }
+
+    #[test]
+    fn llms_txt_rejects_duplicate_and_malformed_routes() {
+        let dup = json!({
+            "routes": [
+                {
+                    "method": "GET",
+                    "path": "/health",
+                    "category": "health",
+                    "read_only": true,
+                    "description": "A.",
+                },
+                {
+                    "method": "GET",
+                    "path": "/health",
+                    "category": "health",
+                    "read_only": true,
+                    "description": "B.",
+                },
+            ],
+        });
+        let err = llms_txt_from_contract(&dup).expect_err("duplicate must fail");
+        assert!(
+            err.to_string().contains("duplicate contract entry"),
+            "{err}"
+        );
+
+        let bad_flag = json!({
+            "routes": [{
+                "method": "GET",
+                "path": "/health",
+                "category": "health",
+                "read_only": "yes",
+                "description": "A.",
+            }],
+        });
+        let err = llms_txt_from_contract(&bad_flag).expect_err("bad read_only must fail");
+        assert!(
+            err.to_string().contains("`read_only` must be a boolean"),
+            "{err}"
+        );
     }
 }

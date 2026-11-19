@@ -433,6 +433,8 @@ pub const CLASSIFIED_ROUTES: &[(&str, RouteClass)] = &[
     // The published OpenAPI document. Route surface only, no execution state,
     // and a client generator must reach it before it holds a credential.
     ("GET /openapi.json", RouteClass::PublicSafe),
+    // Published agent discovery index. Route surface only, no execution state.
+    ("GET /llms.txt", RouteClass::PublicSafe),
     // ── ReadOnly ── reads state, does not modify workflow execution ───────────
     // Audit-export status (issue #953): read-only, admin-gated. Reports cursor
     // position, lag, and last error — never audit record contents.
@@ -1053,6 +1055,7 @@ pub const EXCLUDED_ROUTES: &[&str] = &[
     "GET /health/live",
     "GET /health/ready",
     "GET /openapi.json",
+    "GET /llms.txt",
     "GET /admin/preflight",
     "GET /admin/shards/health",
     "GET /admin/queue-coverage",
@@ -1248,6 +1251,7 @@ pub const ALL_MUTATION_ROUTES: &[(&str, Option<&str>)] = &[
     ("GET /health/live", None),
     ("GET /health/ready", None),
     ("GET /openapi.json", None),
+    ("GET /llms.txt", None),
     ("GET /admin/preflight", None),
     ("GET /admin/shards/health", None),
     ("GET /admin/queue-coverage", None),

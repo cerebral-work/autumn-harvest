@@ -5511,6 +5511,15 @@ pub fn harvest_api_router(api_state: HarvestApiState) -> Router<()> {
         // A route layer runs on a matched route only, so an unknown path
         // still answers 404. It wraps every per-route layer above.
         .route_layer(require_mutation_auth)
+        // PublicSafe and GET-only: merge after `require_mutation_auth` so a
+        // non-GET request returns 405 `Allow: GET` instead of 401.
+        .merge(
+            Router::new().route(
+                "/llms.txt",
+                get(crate::openapi::llms_txt_handler)
+                    .fallback(crate::openapi::llms_txt_method_not_allowed),
+            ),
+        )
         .layer(Extension(api_state))
 }
 
@@ -7119,6 +7128,8 @@ pub const fn management_api_routes() -> &'static [(&'static str, &'static str)] 
         ("GET", "/health/ready"),
         // The published OpenAPI 3.1 document for this router.
         ("GET", "/openapi.json"),
+        // The published agent discovery index for this router.
+        ("GET", "/llms.txt"),
         ("GET", "/admin/preflight"),
         ("GET", "/admin/shards/health"),
         ("GET", "/admin/queue-coverage"),
@@ -8496,6 +8507,8 @@ pub const fn management_api_response_fields()
         ),
         // The OpenAPI document itself, a free-form JSON object.
         ("GET", "/openapi.json", None),
+        // The agent discovery index, a plain-text Markdown document.
+        ("GET", "/llms.txt", None),
         (
             "GET",
             "/admin/preflight",
@@ -58590,6 +58603,10 @@ mod tests {
             classify_route(&Method::GET, "/health"),
             RouteClass::PublicSafe
         );
+        assert_eq!(
+            classify_route(&Method::GET, "/llms.txt"),
+            RouteClass::PublicSafe
+        );
         // Newly-classified #776 mutations.
         assert_eq!(
             classify_route(&Method::POST, "/admin/circuits/act/force-open"),
@@ -58618,6 +58635,10 @@ mod tests {
         // read-only principal must be able to HEAD-probe readable resources.
         assert_eq!(
             classify_route(&Method::HEAD, "/health"),
+            RouteClass::PublicSafe
+        );
+        assert_eq!(
+            classify_route(&Method::HEAD, "/llms.txt"),
             RouteClass::PublicSafe
         );
         assert_eq!(

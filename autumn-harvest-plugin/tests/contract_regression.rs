@@ -1875,3 +1875,34 @@ fn activity_pause_routes_are_classified_and_audited() {
         );
     }
 }
+
+#[test]
+fn llms_txt_route_is_classified_public_safe() {
+    use autumn_harvest::audit::{
+        ALL_MUTATION_ROUTES, CLASSIFIED_ROUTES, EXCLUDED_ROUTES, RouteClass,
+    };
+
+    let route = "GET /llms.txt";
+    assert!(
+        management_api_routes()
+            .iter()
+            .any(|(m, p)| format!("{m} {p}") == route),
+        "{route} must be registered in management_api_routes()"
+    );
+    assert!(
+        CLASSIFIED_ROUTES
+            .iter()
+            .any(|(r, class)| *r == route && *class == RouteClass::PublicSafe),
+        "{route} must be classified PublicSafe in CLASSIFIED_ROUTES"
+    );
+    assert!(
+        ALL_MUTATION_ROUTES
+            .iter()
+            .any(|(r, op)| *r == route && op.is_none()),
+        "{route} must appear in ALL_MUTATION_ROUTES with None"
+    );
+    assert!(
+        EXCLUDED_ROUTES.contains(&route),
+        "{route} is PublicSafe and must be listed in EXCLUDED_ROUTES"
+    );
+}

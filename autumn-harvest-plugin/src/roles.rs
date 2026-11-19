@@ -841,6 +841,8 @@ mod tests {
         let set = roles();
         assert!(set.allows([], &Method::GET, "/health"));
         assert!(set.allows(["unknown"], &Method::GET, "/openapi.json"));
+        assert!(set.allows([], &Method::GET, "/llms.txt"));
+        assert!(set.allows(["unknown"], &Method::GET, "/llms.txt"));
     }
 
     #[test]

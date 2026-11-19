@@ -18,7 +18,9 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 
 use autumn_harvest_plugin::api::{HarvestApiState, harvest_api_router};
 use autumn_harvest_plugin::management_api_routes;
-use autumn_harvest_plugin::openapi::{openapi_document, openapi_json};
+use autumn_harvest_plugin::openapi::{
+    CORE_CLIENT_ROUTES, llms_txt, llms_txt_from_contract, openapi_document, openapi_json,
+};
 use autumn_web::reexports::axum::Router;
 use autumn_web::reexports::axum::body::Body;
 use autumn_web::reexports::axum::routing::get;
@@ -29,6 +31,9 @@ use tower::ServiceExt;
 /// The pretty-printed copy, resolved from this crate rather than the caller
 /// working directory. The compact copy is compiled into the crate.
 const PRETTY_ARTIFACT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/openapi.json");
+
+/// Checked-in `docs/llms.txt` copy, pinned against the compiled-in crate copy.
+const DOCS_LLMS_TXT_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/llms.txt");
 
 /// The contract the document is derived from, read for cross-checks.
 const API_CONTRACT_JSON: &str = include_str!("../../docs/api-contract.json");
@@ -346,6 +351,7 @@ fn known_routes_carry_their_expected_class() {
     let doc = document();
     for (method, path, class, waives_auth) in [
         ("get", "/openapi.json", "public_safe", true),
+        ("get", "/llms.txt", "public_safe", true),
         ("get", "/health", "public_safe", true),
         ("get", "/health/live", "public_safe", true),
         ("get", "/health/ready", "public_safe", true),
@@ -836,6 +842,125 @@ async fn served_endpoint_returns_the_document() {
         openapi_json(),
         "the endpoint serves the compiled-in bytes, unchanged"
     );
+}
+
+/// Both checked-in `llms.txt` artifacts match [`llms_txt_from_contract`] byte for byte.
+#[test]
+fn checked_in_llms_txt_matches_the_generated_text() {
+    let contract: Value = serde_json::from_str(API_CONTRACT_JSON).expect("contract must parse");
+    let generated = llms_txt_from_contract(&contract)
+        .expect("the contract must transform into llms.txt Markdown");
+
+    assert_eq!(
+        llms_txt(),
+        generated,
+        "autumn-harvest-plugin/llms.txt is stale. Regenerate with:\n  \
+         scripts/regenerate-openapi.sh"
+    );
+
+    let docs_copy = std::fs::read_to_string(DOCS_LLMS_TXT_PATH)
+        .unwrap_or_else(|error| panic!("docs/llms.txt must be readable: {error}"));
+    assert_eq!(
+        docs_copy, generated,
+        "docs/llms.txt is stale. Regenerate with:\n  \
+         scripts/regenerate-openapi.sh"
+    );
+
+    for (method, path) in CORE_CLIENT_ROUTES {
+        let needle = format!("- `{method} {path}`");
+        assert!(
+            generated.contains(&needle),
+            "CORE_CLIENT_ROUTES entry `{method} {path}` missing from llms.txt"
+        );
+    }
+}
+
+/// `GET /llms.txt` serves the compiled-in text with security and `service-desc`
+/// headers, stays nest-relative, and answers `405 Allow: GET` on non-`GET`.
+#[tokio::test]
+async fn served_llms_txt_endpoint_returns_the_document_and_headers() {
+    let app = harvest_api_router(HarvestApiState::new());
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::GET)
+                .uri("/llms.txt")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok()),
+        Some("text/plain; charset=utf-8")
+    );
+    assert_eq!(
+        response
+            .headers()
+            .get("x-content-type-options")
+            .and_then(|v| v.to_str().ok()),
+        Some("nosniff")
+    );
+    assert_eq!(
+        response.headers().get("link").and_then(|v| v.to_str().ok()),
+        Some("</openapi.json>; rel=\"service-desc\"; type=\"application/json\"")
+    );
+
+    let body = autumn_web::reexports::axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(String::from_utf8(body.to_vec()).unwrap(), llms_txt());
+
+    let post = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/llms.txt")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(post.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(
+        post.headers().get("allow").and_then(|v| v.to_str().ok()),
+        Some("GET")
+    );
+
+    let nested = Router::new()
+        .route("/llms.txt", get(|| async { "# Host App\n" }))
+        .nest("/api/harvest", harvest_api_router(HarvestApiState::new()));
+    let host_resp = nested
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/llms.txt")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let host_body = autumn_web::reexports::axum::body::to_bytes(host_resp.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(host_body.as_ref(), b"# Host App\n");
+
+    let harvest_resp = nested
+        .oneshot(
+            Request::builder()
+                .uri("/api/harvest/llms.txt")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(harvest_resp.status(), StatusCode::OK);
 }
 
 /// The repository root, resolved from this crate.
