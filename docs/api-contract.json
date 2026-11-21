@@ -6011,6 +6011,34 @@
     },
     {
       "method": "GET",
+      "path": "/llms.txt",
+      "category": "discovery",
+      "read_only": true,
+      "description": "Serve the agent-readable llms.txt Markdown discovery index for this management API. Derived deterministically from this contract and compiled into the crate, with an RFC 8288 service-desc Link header pointing to /openapi.json. PublicSafe and read-only, so automated agents can inspect the API surface before acquiring credentials. Checked in at docs/llms.txt and autumn-harvest-plugin/llms.txt.",
+      "params": [],
+      "request_body": null,
+      "success_response": {
+        "content_type": "text/plain; charset=utf-8",
+        "status": 200,
+        "free_form": true,
+        "headers": [
+          {
+            "name": "Link",
+            "type": "string",
+            "description": "RFC 8288 service-desc link to </openapi.json>."
+          },
+          {
+            "name": "X-Content-Type-Options",
+            "type": "string",
+            "description": "Always nosniff."
+          }
+        ],
+        "note": "Markdown llms.txt document summarizing authentication, discovery routes, core workflow endpoints, and category-grouped management endpoints."
+      },
+      "error_responses": []
+    },
+    {
+      "method": "GET",
       "path": "/admin/preflight",
       "category": "admin",
       "read_only": true,

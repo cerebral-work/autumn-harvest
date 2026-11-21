@@ -7415,6 +7415,46 @@
         "x-harvest-route-class": "public_safe"
       }
     },
+    "/llms.txt": {
+      "get": {
+        "description": "Serve the agent-readable llms.txt Markdown discovery index for this management API. Derived deterministically from this contract and compiled into the crate, with an RFC 8288 service-desc Link header pointing to /openapi.json. PublicSafe and read-only, so automated agents can inspect the API surface before acquiring credentials. Checked in at docs/llms.txt and autumn-harvest-plugin/llms.txt.",
+        "operationId": "get_llms_txt",
+        "responses": {
+          "200": {
+            "content": {
+              "text/plain; charset=utf-8": {
+                "schema": {
+                  "description": "Text body in the declared format. See the response description.",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Markdown llms.txt document summarizing authentication, discovery routes, core workflow endpoints, and category-grouped management endpoints.",
+            "headers": {
+              "Link": {
+                "description": "RFC 8288 service-desc link to </openapi.json>.",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "description": "Always nosniff.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [],
+        "summary": "Serve the agent-readable llms.txt Markdown discovery index for this management API.",
+        "tags": [
+          "discovery"
+        ],
+        "x-harvest-read-only": true,
+        "x-harvest-route-class": "public_safe"
+      }
+    },
     "/openapi.json": {
       "get": {
         "description": "Serve the OpenAPI 3.1 document for this management API (issue #694). The document is derived from this contract, so it covers every route listed here and nothing else. Read-only, and never behind the built-in admin guard: a client generator must reach it before it holds a credential. An embedder that wraps the whole router in its own auth middleware (api_with_auth) gates this route too. The identical document is checked in at docs/openapi.json.",

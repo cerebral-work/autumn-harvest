@@ -44,3 +44,7 @@ formal/tla/states/
 
 # An interrupted Ledger capture can leave its stage (issue #1956).
 docs/perf-artifacts/**/.staging-*/
+
+# Local DAG runner & telemetry scratch
+.dagrun/
+.dagr/

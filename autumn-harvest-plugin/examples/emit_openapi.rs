@@ -3,14 +3,15 @@
 // mention in backticks, matching `autumn_web::openapi`.
 #![allow(clippy::doc_markdown)]
 
-//! Transform the management API contract into an OpenAPI 3.1 document (issue #694).
+//! Transform the management API contract into OpenAPI 3.1 or `llms.txt` (issue #694).
 //!
-//! Prints the document to stdout. `scripts/regenerate-openapi.sh` runs it twice
-//! to write the two checked-in copies:
+//! Prints the generated artifact to stdout. `scripts/regenerate-openapi.sh`
+//! runs it to write all checked-in copies:
 //!
 //! ```sh
-//! emit_openapi docs/api-contract.json           > docs/openapi.json
-//! emit_openapi docs/api-contract.json --compact > autumn-harvest-plugin/openapi.json
+//! emit_openapi docs/api-contract.json            > docs/openapi.json
+//! emit_openapi docs/api-contract.json --compact  > autumn-harvest-plugin/openapi.json
+//! emit_openapi docs/api-contract.json --llms-txt > docs/llms.txt
 //! ```
 //!
 //! The contract path is an argument, not an `include_str!`, on purpose. A
@@ -19,15 +20,21 @@
 
 use std::process::ExitCode;
 
-use autumn_harvest_plugin::openapi::document_from_contract;
+use autumn_harvest_plugin::openapi::{document_from_contract, llms_txt_from_contract};
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let Some(path) = args.next() else {
-        eprintln!("usage: emit_openapi <path-to-api-contract.json> [--compact]");
+        eprintln!("usage: emit_openapi <path-to-api-contract.json> [--compact | --llms-txt]");
         return ExitCode::FAILURE;
     };
-    let compact = args.any(|arg| arg == "--compact");
+    let flags: Vec<String> = args.collect();
+    let compact = flags.iter().any(|arg| arg == "--compact");
+    let llms_txt = flags.iter().any(|arg| arg == "--llms-txt");
+    if compact && llms_txt {
+        eprintln!("--compact and --llms-txt are mutually exclusive");
+        return ExitCode::FAILURE;
+    }
 
     let raw = match std::fs::read_to_string(&path) {
         Ok(raw) => raw,
@@ -43,6 +50,19 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if llms_txt {
+        return match llms_txt_from_contract(&contract) {
+            Ok(text) => {
+                print!("{text}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+
     let document = match document_from_contract(&contract) {
         Ok(document) => document,
         Err(error) => {

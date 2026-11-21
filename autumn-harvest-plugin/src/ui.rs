@@ -880,6 +880,13 @@ pub fn harvest_ui_router(api_state: HarvestApiState) -> Router<()> {
         .layer(axum::middleware::from_fn(
             crate::same_origin::require_same_origin,
         ))
+        // `/llms.txt` is GET-only and performs no mutation; merge after
+        // `require_same_origin` so non-GET requests return 405 `Allow: GET`.
+        .merge(Router::new().route(
+            "/llms.txt",
+            get(llms_txt_ui_handler).fallback(crate::openapi::llms_txt_method_not_allowed),
+        ))
+        .layer(axum::middleware::map_response(attach_ui_describedby_link))
 }
 
 async fn index() -> axum::response::Redirect {
@@ -1598,6 +1605,65 @@ struct LiveView {
     gap_ms: u32,
     /// The gap between two timed fetches, in milliseconds.
     poll_ms: u32,
+}
+
+/// Agent discovery summary served at `GET /llms.txt` on [`harvest_ui_router`].
+const VANTAGE_LLMS_TXT: &str = "\
+# Vantage — Autumn Harvest Web Orchestrator UI
+
+> Operator HTML dashboard for inspecting and controlling autumn-harvest durable workflows, DAGs, schedules, workers, task queues, dead-letter queues, and admission gates.
+
+Automated agents should call the machine-readable Harvest management JSON API instead of scraping Vantage HTML pages:
+
+- [Management API Agent Index](../llms.txt): `GET /api/harvest/llms.txt` (relative `../llms.txt` when Vantage is nested at `{api_path}/ui`).
+- [Management API OpenAPI 3.1 Spec](../openapi.json): `GET /api/harvest/openapi.json` (relative `../openapi.json` when Vantage is nested at `{api_path}/ui`).
+
+## Dashboard Views
+
+- `GET /` — redirects to `workflows`.
+- `GET /workflows` — workflow execution list, state/search filters, and live SSE refresh.
+- `GET /workflows/{id}` — execution detail, event history, child executions, and operator form actions (`cancel`, `terminate`, `pause`, `resume`, `signal`, `reset`, `trigger-update`).
+- `GET /workflows/{id}/timeline` — execution timeline and Gantt view.
+- `GET /workflows/{id}/archived-history` — archived event history for pruned executions (admin-gated).
+- `GET /dags` — registered DAG definitions and schedule status.
+- `GET /dags/{dag_name}` — DAG task topology, recent runs, and `/dags/{dag_name}/runs/{run_exec_id}/retry` dry-run/commit retry flow.
+- `GET /schedules` — recurring workflow and DAG schedules, plus `/schedules/{id}/{preview,runs,backfill}` drill-downs and pause/resume/trigger/delete controls.
+- `GET /workers` — worker fleet liveness, heartbeats, and active task counts.
+- `GET /build-routing` — task-queue build-ID routing policies, compatibility sets, and build retirement.
+- `GET /dead-letters` — dead-letter queue inspection (admin-gated; bulk replay and discard live on the management API).
+- `GET /admin/gates` — active admission gates and `POST /admin/gates/{id}/lift` one-click gate lift.
+";
+
+/// `GET /llms.txt` on [`harvest_ui_router`].
+pub(crate) async fn llms_txt_ui_handler() -> axum::response::Response {
+    use axum::http::header;
+    (
+        [
+            (header::CONTENT_TYPE, crate::openapi::LLMS_TXT_MEDIA_TYPE),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        ],
+        VANTAGE_LLMS_TXT,
+    )
+        .into_response()
+}
+
+/// Attach `Link: </llms.txt>; rel="describedby"` to HTML responses.
+async fn attach_ui_describedby_link(
+    mut response: axum::response::Response,
+) -> axum::response::Response {
+    use axum::http::{HeaderValue, header};
+    let is_html = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|media_type| media_type.starts_with("text/html"));
+    if is_html {
+        response.headers_mut().append(
+            header::LINK,
+            HeaderValue::from_static("</llms.txt>; rel=\"describedby\""),
+        );
+    }
+    response
 }
 
 /// The live-refresh script of the workflow list and detail pages.
@@ -5223,6 +5289,7 @@ fn layout_dead_letters(
             head {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width,initial-scale=1";
+                link rel="describedby" type="text/plain" href="/llms.txt";
                 @if let Some(secs) = refresh {
                     meta http-equiv="refresh" content={ (secs) "; url=" (refresh_target) };
                 }
@@ -5617,6 +5684,7 @@ fn layout_workers(title: &str, body: &Markup, refresh: Option<u64>) -> Markup {
             head {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width,initial-scale=1";
+                link rel="describedby" type="text/plain" href="/llms.txt";
                 @if let Some(secs) = refresh {
                     meta http-equiv="refresh" content=(secs);
                 }
@@ -7300,6 +7368,7 @@ fn layout_live(
             head {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width,initial-scale=1";
+                link rel="describedby" type="text/plain" href="/llms.txt";
                 @if let Some(base) = html_base {
                     base href=(base);
                 }
@@ -8465,6 +8534,7 @@ fn layout_dag_detail(title: &str, body: &Markup, base_href: &str, refresh: Optio
             head {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width,initial-scale=1";
+                link rel="describedby" type="text/plain" href="/llms.txt";
                 title { (title) }
                 style { (PreEscaped(STYLE)) }
                 @if let Some(secs) = refresh { meta http-equiv="refresh" content=(secs); }
@@ -9278,6 +9348,7 @@ fn layout_build_routing(title: &str, body: &Markup, refresh: Option<u64>) -> Mar
             head {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width,initial-scale=1";
+                link rel="describedby" type="text/plain" href="/llms.txt";
                 @if let Some(secs) = refresh {
                     meta http-equiv="refresh" content=(secs);
                 }
@@ -12868,6 +12939,7 @@ fn layout_gates(title: &str, body: &Markup) -> Markup {
             head {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width,initial-scale=1";
+                link rel="describedby" type="text/plain" href="/llms.txt";
                 title { (title) }
                 style { (PreEscaped(STYLE)) }
             }
@@ -12927,6 +12999,7 @@ fn layout_schedules(
             head {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width,initial-scale=1";
+                link rel="describedby" type="text/plain" href="/llms.txt";
                 @if let Some(secs) = refresh {
                     meta http-equiv="refresh" content={ (secs) "; url=" (refresh_target) };
                 }
@@ -20864,5 +20937,118 @@ mod tests {
         let script = String::from_utf8(body.to_vec()).expect("utf-8");
         assert!(script.contains("data-live-region"));
         assert!(script.contains("Last-Event-ID"));
+    }
+
+    #[tokio::test]
+    async fn vantage_llms_txt_endpoint_is_served_and_rejects_mutations() {
+        use tower::ServiceExt as _;
+        let app = harvest_ui_router(crate::api::HarvestApiState::new());
+        let response = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/llms.txt")
+                    .body(axum::body::Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok()),
+            Some("text/plain; charset=utf-8")
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::X_CONTENT_TYPE_OPTIONS)
+                .and_then(|v| v.to_str().ok()),
+            Some("nosniff")
+        );
+        assert!(
+            response.headers().get(axum::http::header::LINK).is_none(),
+            "plain-text /llms.txt response must not self-attach the HTML Link header"
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let text = String::from_utf8(body.to_vec()).expect("utf-8");
+        assert!(text.starts_with("# Vantage — Autumn Harvest Web Orchestrator UI\n"));
+        for needle in [
+            "/api/harvest/llms.txt",
+            "/api/harvest/openapi.json",
+            "GET /workflows",
+            "GET /dags",
+            "GET /schedules",
+            "GET /workers",
+            "GET /build-routing",
+            "GET /dead-letters",
+            "GET /admin/gates",
+        ] {
+            assert!(text.contains(needle), "missing `{needle}` in UI llms.txt");
+        }
+
+        let post = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method(axum::http::Method::POST)
+                    .uri("/llms.txt")
+                    .body(axum::body::Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(post.status(), axum::http::StatusCode::METHOD_NOT_ALLOWED);
+        assert_eq!(
+            post.headers()
+                .get(axum::http::header::ALLOW)
+                .and_then(|v| v.to_str().ok()),
+            Some("GET")
+        );
+    }
+
+    #[tokio::test]
+    async fn vantage_html_responses_carry_describedby_link_header_and_head_tag() {
+        use tower::ServiceExt as _;
+        let app = harvest_ui_router(crate::api::HarvestApiState::new());
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/schedules")
+                    .body(axum::body::Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::LINK)
+                .and_then(|v| v.to_str().ok()),
+            Some("</llms.txt>; rel=\"describedby\"")
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let html = String::from_utf8(body.to_vec()).expect("utf-8");
+        let expected_tag = r#"<link rel="describedby" type="text/plain" href="/llms.txt">"#;
+        assert!(html.contains(expected_tag), "{html}");
+
+        let empty = maud::html! {};
+        for rendered in [
+            layout("t", &empty, "", None).into_string(),
+            layout_dead_letters("t", &empty, None, "").into_string(),
+            layout_workers("t", &empty, None).into_string(),
+            layout_dag_detail("t", &empty, "", None).into_string(),
+            layout_build_routing("t", &empty, None).into_string(),
+            layout_gates("t", &empty).into_string(),
+            layout_schedules("t", &empty, None, "", "").into_string(),
+        ] {
+            assert!(rendered.contains(expected_tag), "{rendered}");
+        }
     }
 }
