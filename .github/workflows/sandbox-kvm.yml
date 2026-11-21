@@ -24,7 +24,7 @@ on:
       - "rust-toolchain.toml"
       - ".github/workflows/sandbox-kvm.yml"
   push:
-    branches: [trunk-dev]
+    branches: [cerebral, trunk-dev]
     paths:
       - "autumn-harvest/src/sandbox/**"
       - "autumn-harvest/Cargo.toml"

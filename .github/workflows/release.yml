@@ -36,7 +36,7 @@ on:
   pull_request:
     # `ready_for_review` runs the dry run that a draft skipped.
     types: [opened, synchronize, reopened, ready_for_review]
-    branches: [trunk, trunk-dev]
+    branches: [cerebral, trunk, trunk-dev]
     paths:
       - .github/workflows/release.yml
       # The image inputs. A dependency change can add a shared library that

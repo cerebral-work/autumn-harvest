@@ -17,7 +17,7 @@ on:
     # Daily at 05:37 UTC, off the hour and away from the other nightlies.
     - cron: "37 5 * * *"
   pull_request:
-    branches: [trunk, trunk-dev]
+    branches: [cerebral, trunk, trunk-dev]
     paths:
       - .github/workflows/advisory-scan.yml
       - .github/ci/advisory-scan.sh

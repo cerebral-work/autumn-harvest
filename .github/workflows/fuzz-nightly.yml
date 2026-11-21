@@ -31,7 +31,7 @@ on:
     - cron: "47 2 * * *"
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    branches: [trunk, trunk-dev]
+    branches: [cerebral, trunk, trunk-dev]
     paths:
       - "fuzz/**"
       - ".github/workflows/fuzz-nightly.yml"
